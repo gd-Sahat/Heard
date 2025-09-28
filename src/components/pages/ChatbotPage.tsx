@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, ArrowLeft, Minimize2, Settings } from "lucide-react";
+import { Send, Bot, User, ArrowLeft, Minimize2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
@@ -13,9 +13,10 @@ interface Message {
 
 interface ChatbotPageProps {
   onBack?: () => void;
+  hfToken?: string;
 }
 
-export function ChatbotPage({ onBack }: ChatbotPageProps) {
+export function ChatbotPage({ onBack, hfToken }: ChatbotPageProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -28,16 +29,25 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
   const [isTyping, setIsTyping] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [conversationHistory, setConversationHistory] = useState<Array<{role: string, content: string}>>([]);
-  const [currentModel, setCurrentModel] = useState<'ollama' | 'huggingface' | 'local'>('local');
-  const [isModelReady, setIsModelReady] = useState(false);
+  const [currentModel, setCurrentModel] = useState<'hf-router' | 'ollama' | 'local'>('hf-router');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Model configuration
-  const OLLAMA_URL = "http://localhost:11434"; // Default Ollama URL
-  const OLLAMA_MODEL = "llama3.2:3b"; // Or try: "phi3", "mistral", "gemma2:2b"
-  const HF_API_KEY = ""; // Optional: Add your Hugging Face API key for higher rate limits
+  // Configuration
+  const HF_TOKEN = hfToken || process.env.REACT_APP_HF_TOKEN || "";
+  const OLLAMA_URL = "http://localhost:11434";
+  const OLLAMA_MODEL = "llama3.2:3b";
+
+  // Available Hugging Face models through router
+  const HF_MODELS = [
+    "openai/gpt-oss-120b:nebius",     // GPT-OSS 120B - Very capable
+    "meta-llama/llama-3.1-8b-instruct", // Llama 3.1 8B - Good balance
+    "microsoft/phi-3.5-mini-instruct",   // Phi 3.5 Mini - Fast
+    "mistralai/mistral-7b-instruct",     // Mistral 7B - Reliable
+  ];
   
+  const [selectedHFModel, setSelectedHFModel] = useState(HF_MODELS[0]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -46,17 +56,64 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
     scrollToBottom();
   }, [messages]);
 
-  // Check if Ollama is available
-  const checkOllamaStatus = async (): Promise<boolean> => {
+  // Hugging Face Router API call (OpenAI-compatible)
+  const generateHFRouterResponse = async (userMessage: string): Promise<string> => {
     try {
-      const response = await fetch(`${OLLAMA_URL}/api/tags`);
-      return response.ok;
+      const systemPrompt = `You are a compassionate AI mental health support companion called "Heard". Your role is to:
+
+1. Listen actively and empathetically to users' concerns
+2. Provide emotional validation and support  
+3. Ask thoughtful follow-up questions to help users process their feelings
+4. Offer gentle coping strategies when appropriate
+5. Maintain appropriate boundaries - you're not a replacement for professional therapy
+6. Always prioritize user safety and well-being
+
+Guidelines:
+- Use warm, non-judgmental language
+- Reflect back what users share to show you're listening
+- Ask open-ended questions to encourage deeper reflection
+- If someone mentions self-harm or crisis, gently suggest professional resources
+- Keep responses concise but meaningful (2-4 sentences typically)
+- Focus on emotional support rather than giving direct advice
+
+Remember: You're creating a safe space for people to be heard and validated.`;
+
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...conversationHistory.slice(-10), // Keep last 10 messages for context
+        { role: 'user', content: userMessage }
+      ];
+
+      const response = await fetch('https://router.huggingface.co/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${HF_TOKEN}`,
+        },
+        body: JSON.stringify({
+          model: selectedHFModel,
+          messages: messages,
+          max_tokens: 200,
+          temperature: 0.7,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`HF Router API Error: ${response.status} - ${errorData}`);
+      }
+
+      const data = await response.json();
+      return data.choices[0]?.message?.content || "I'm here to listen. Can you tell me more?";
+
     } catch (error) {
-      return false;
+      console.error('HF Router Error:', error);
+      throw error;
     }
   };
 
-  // Ollama API call
+  // Ollama API call (fallback)
   const generateOllamaResponse = async (userMessage: string): Promise<string> => {
     try {
       const systemPrompt = `You are a compassionate AI mental health support companion. Your role is to provide empathetic, supportive responses to help users feel heard and validated. 
@@ -104,73 +161,8 @@ Remember: Create a safe space for people to be heard.`;
     }
   };
 
-  // Hugging Face Inference API call (free tier)
-  const generateHuggingFaceResponse = async (userMessage: string): Promise<string> => {
-    try {
-      // Using Microsoft's DialoGPT for conversational responses
-      const model = "microsoft/DialoGPT-large";
-      
-      // Build conversation context
-      let conversationText = conversationHistory
-        .slice(-6) // Keep last 6 exchanges
-        .map(msg => `${msg.role === 'user' ? 'Human' : 'Bot'}: ${msg.content}`)
-        .join('\n');
-      
-      conversationText += `\nHuman: ${userMessage}\nBot:`;
-
-      const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(HF_API_KEY && { 'Authorization': `Bearer ${HF_API_KEY}` })
-        },
-        body: JSON.stringify({
-          inputs: conversationText,
-          parameters: {
-            max_new_tokens: 100,
-            temperature: 0.7,
-            do_sample: true,
-            return_full_text: false
-          }
-        }),
-      });
-
-      if (!response.ok) {
-        if (response.status === 503) {
-          throw new Error("Model is loading, please try again in a moment");
-        }
-        throw new Error(`Hugging Face API Error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      let botResponse = data[0]?.generated_text || "I'm here to listen. Can you tell me more?";
-      
-      // Clean up the response
-      botResponse = botResponse
-        .replace(/Human:.*$/g, '') // Remove any trailing human text
-        .replace(/Bot:\s*/g, '') // Remove "Bot:" prefix
-        .trim();
-
-      // Ensure empathetic response if too short or generic
-      if (botResponse.length < 20 || botResponse.includes('undefined')) {
-        return generateEmpathethicFallback(userMessage);
-      }
-
-      return botResponse;
-
-    } catch (error) {
-      console.error('Hugging Face Error:', error);
-      throw error;
-    }
-  };
-
   // Enhanced local empathetic responses
-  const generateEmpathethicFallback = (userMessage: string): string => {
+  const generateLocalResponse = (userMessage: string): string => {
     const lowerMessage = userMessage.toLowerCase();
     
     // Emotion-specific responses
@@ -201,72 +193,52 @@ Remember: Create a safe space for people to be heard.`;
       return responses[Math.floor(Math.random() * responses.length)];
     }
     
-    if (lowerMessage.includes('angry') || lowerMessage.includes('frustrated') || lowerMessage.includes('mad')) {
-      const responses = [
-        "Your anger is completely valid - emotions like frustration often signal that something important needs attention. What's been triggering these feelings for you?",
-        "I can sense your frustration, and it's okay to feel angry sometimes. These emotions are telling us something. What's been the hardest part to deal with?",
-        "Anger can be such a powerful emotion, and it sounds like you're really struggling with something. I'm here to listen. What's been building up for you?"
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
-    }
-    
-    if (lowerMessage.includes('scared') || lowerMessage.includes('afraid') || lowerMessage.includes('fear')) {
-      const responses = [
-        "Fear can make us feel so vulnerable. It's brave of you to share this with me. What's been making you feel scared lately?",
-        "I can hear that you're dealing with some real fears right now. That must feel overwhelming. Would you like to talk about what's frightening you?",
-        "Being afraid is such a human experience, and you don't have to face it alone. I'm here to listen. What's been on your mind?"
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
-    }
-    
-    // Supportive acknowledgments
-    if (lowerMessage.includes('thank') || lowerMessage.includes('grateful') || lowerMessage.includes('appreciate')) {
-      const responses = [
-        "Your gratitude means so much to me. It shows your strength even in difficult times. How are you feeling right now?",
-        "You're so welcome. I'm honored that you feel comfortable sharing here. What's been on your heart lately?",
-        "Thank you for saying that. Your openness creates such a meaningful connection. What would be most helpful for you today?"
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
-    }
-    
     // General empathetic responses
     const generalResponses = [
       "I really appreciate you sharing that with me. It sounds like you're going through something significant. Can you tell me more about how this has been affecting you?",
       "Thank you for trusting me with your thoughts. I can sense this is important to you. What's been the most challenging part of this experience?",
       "I hear you, and I want you to know that your feelings and experiences are completely valid. What's been weighing on your mind the most?",
       "It takes real courage to open up about what you're going through. I'm here to listen without any judgment. How long have you been dealing with this?",
-      "Your words matter, and so do your feelings. I can tell this is something you've been thinking about deeply. What would feel most supportive right now?",
-      "I'm glad you felt comfortable enough to share this with me. Sometimes just putting our thoughts into words can help. What's been your biggest concern lately?"
+      "Your words matter, and so do your feelings. I can tell this is something you've been thinking about deeply. What would feel most supportive right now?"
     ];
     
     return generalResponses[Math.floor(Math.random() * generalResponses.length)];
   };
 
+  // Check if Ollama is available
+  const checkOllamaStatus = async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`${OLLAMA_URL}/api/tags`);
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  };
+
   // Main response generation function
   const generateBotResponse = async (userMessage: string): Promise<string> => {
     try {
-      // Try Ollama first if selected
+      // Try HF Router first if token is available
+      if (currentModel === 'hf-router' && HF_TOKEN) {
+        return await generateHFRouterResponse(userMessage);
+      }
+
+      // Try Ollama if selected
       if (currentModel === 'ollama') {
         const isOllamaAvailable = await checkOllamaStatus();
         if (isOllamaAvailable) {
           return await generateOllamaResponse(userMessage);
         } else {
           console.log('Ollama not available, falling back...');
-          setCurrentModel('huggingface');
         }
       }
 
-      // Try Hugging Face if selected or Ollama failed
-      if (currentModel === 'huggingface') {
-        return await generateHuggingFaceResponse(userMessage);
-      }
-
       // Fallback to local responses
-      return generateEmpathethicFallback(userMessage);
+      return generateLocalResponse(userMessage);
 
     } catch (error) {
       console.error('AI model error, using local fallback:', error);
-      return generateEmpathethicFallback(userMessage);
+      return generateLocalResponse(userMessage);
     }
   };
 
@@ -343,8 +315,8 @@ Remember: Create a safe space for people to be heard.`;
 
   const getModelDisplayName = () => {
     switch (currentModel) {
+      case 'hf-router': return `HF: ${selectedHFModel.split('/')[1] || selectedHFModel}`;
       case 'ollama': return 'Ollama (Local)';
-      case 'huggingface': return 'Hugging Face';
       case 'local': return 'Local Responses';
       default: return 'AI Assistant';
     }
@@ -352,8 +324,8 @@ Remember: Create a safe space for people to be heard.`;
 
   const getModelStatus = () => {
     switch (currentModel) {
+      case 'hf-router': return HF_TOKEN ? '🤗 Using Hugging Face Router API' : '❌ HF Token required';
       case 'ollama': return '🏠 Running locally with Ollama';
-      case 'huggingface': return '🤗 Using Hugging Face free inference';
       case 'local': return '💭 Using empathetic local responses';
       default: return '';
     }
@@ -399,17 +371,34 @@ Remember: Create a safe space for people to be heard.`;
               </div>
             </div>
           </div>
+          
           <div className="flex items-center space-x-2">
             {/* Model Selector */}
             <select
               value={currentModel}
-              onChange={(e) => setCurrentModel(e.target.value as 'ollama' | 'huggingface' | 'local')}
+              onChange={(e) => setCurrentModel(e.target.value as 'hf-router' | 'ollama' | 'local')}
               className="bg-white/20 text-white rounded-lg px-3 py-1 text-sm border border-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
             >
-              <option value="local" className="text-gray-800">Local Responses</option>
-              <option value="huggingface" className="text-gray-800">Hugging Face</option>
+              <option value="hf-router" className="text-gray-800">HF Router</option>
               <option value="ollama" className="text-gray-800">Ollama</option>
+              <option value="local" className="text-gray-800">Local</option>
             </select>
+            
+            {/* HF Model Selector */}
+            {currentModel === 'hf-router' && (
+              <select
+                value={selectedHFModel}
+                onChange={(e) => setSelectedHFModel(e.target.value)}
+                className="bg-white/20 text-white rounded-lg px-3 py-1 text-sm border border-white/30 focus:outline-none focus:ring-2 focus:ring-white/50 max-w-[120px]"
+              >
+                {HF_MODELS.map((model) => (
+                  <option key={model} value={model} className="text-gray-800">
+                    {model.split('/')[1]?.split('-')[0] || model}
+                  </option>
+                ))}
+              </select>
+            )}
+            
             <Button
               variant="ghost"
               size="icon"
