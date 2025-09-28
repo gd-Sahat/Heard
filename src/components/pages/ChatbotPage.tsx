@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, ArrowLeft, Minimize2, Maximize2 } from "lucide-react";
+import { Send, Bot, User, ArrowLeft, Minimize2, Settings } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
@@ -27,9 +27,17 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [conversationHistory, setConversationHistory] = useState<Array<{role: string, content: string}>>([]);
+  const [currentModel, setCurrentModel] = useState<'ollama' | 'huggingface' | 'local'>('local');
+  const [isModelReady, setIsModelReady] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Model configuration
+  const OLLAMA_URL = "http://localhost:11434"; // Default Ollama URL
+  const OLLAMA_MODEL = "llama3.2:3b"; // Or try: "phi3", "mistral", "gemma2:2b"
+  const HF_API_KEY = ""; // Optional: Add your Hugging Face API key for higher rate limits
+  
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -38,48 +46,228 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
     scrollToBottom();
   }, [messages]);
 
-  const generateBotResponse = (userMessage: string): string => {
+  // Check if Ollama is available
+  const checkOllamaStatus = async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`${OLLAMA_URL}/api/tags`);
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  // Ollama API call
+  const generateOllamaResponse = async (userMessage: string): Promise<string> => {
+    try {
+      const systemPrompt = `You are a compassionate AI mental health support companion. Your role is to provide empathetic, supportive responses to help users feel heard and validated. 
+
+Guidelines:
+- Listen actively and empathetically
+- Provide emotional validation
+- Ask thoughtful follow-up questions
+- Keep responses concise (2-4 sentences)
+- Use warm, non-judgmental language
+- Focus on emotional support, not medical advice
+- If someone mentions crisis/self-harm, suggest professional help
+
+Remember: Create a safe space for people to be heard.`;
+
+      const prompt = `${systemPrompt}\n\nHuman: ${userMessage}\n\nAssistant:`;
+
+      const response = await fetch(`${OLLAMA_URL}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: OLLAMA_MODEL,
+          prompt: prompt,
+          stream: false,
+          options: {
+            temperature: 0.7,
+            top_p: 0.9,
+            max_tokens: 200,
+          }
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Ollama API Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.response || "I'm here to listen. Can you tell me more?";
+
+    } catch (error) {
+      console.error('Ollama Error:', error);
+      throw error;
+    }
+  };
+
+  // Hugging Face Inference API call (free tier)
+  const generateHuggingFaceResponse = async (userMessage: string): Promise<string> => {
+    try {
+      // Using Microsoft's DialoGPT for conversational responses
+      const model = "microsoft/DialoGPT-large";
+      
+      // Build conversation context
+      let conversationText = conversationHistory
+        .slice(-6) // Keep last 6 exchanges
+        .map(msg => `${msg.role === 'user' ? 'Human' : 'Bot'}: ${msg.content}`)
+        .join('\n');
+      
+      conversationText += `\nHuman: ${userMessage}\nBot:`;
+
+      const response = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(HF_API_KEY && { 'Authorization': `Bearer ${HF_API_KEY}` })
+        },
+        body: JSON.stringify({
+          inputs: conversationText,
+          parameters: {
+            max_new_tokens: 100,
+            temperature: 0.7,
+            do_sample: true,
+            return_full_text: false
+          }
+        }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 503) {
+          throw new Error("Model is loading, please try again in a moment");
+        }
+        throw new Error(`Hugging Face API Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      let botResponse = data[0]?.generated_text || "I'm here to listen. Can you tell me more?";
+      
+      // Clean up the response
+      botResponse = botResponse
+        .replace(/Human:.*$/g, '') // Remove any trailing human text
+        .replace(/Bot:\s*/g, '') // Remove "Bot:" prefix
+        .trim();
+
+      // Ensure empathetic response if too short or generic
+      if (botResponse.length < 20 || botResponse.includes('undefined')) {
+        return generateEmpathethicFallback(userMessage);
+      }
+
+      return botResponse;
+
+    } catch (error) {
+      console.error('Hugging Face Error:', error);
+      throw error;
+    }
+  };
+
+  // Enhanced local empathetic responses
+  const generateEmpathethicFallback = (userMessage: string): string => {
     const lowerMessage = userMessage.toLowerCase();
     
-    // Empathetic responses based on keywords
+    // Emotion-specific responses
     if (lowerMessage.includes('sad') || lowerMessage.includes('depressed') || lowerMessage.includes('down')) {
-      return "I hear that you're feeling sad right now. That must be really difficult. Would you like to tell me more about what's been weighing on your heart?";
+      const responses = [
+        "I can hear the sadness in your words, and I want you to know that what you're feeling matters. Sometimes just acknowledging these heavy emotions can be the first step. What's been weighing on you most?",
+        "It takes courage to share when you're feeling down. I'm here to listen without judgment. Would you like to tell me more about what's contributing to these feelings?",
+        "Sadness can feel overwhelming, but you don't have to carry it alone. I'm here with you right now. What would feel most supportive in this moment?"
+      ];
+      return responses[Math.floor(Math.random() * responses.length)];
     }
     
     if (lowerMessage.includes('anxious') || lowerMessage.includes('worried') || lowerMessage.includes('stress')) {
-      return "It sounds like you're experiencing some anxiety or stress. Those feelings can be overwhelming. What's been causing you the most worry lately?";
+      const responses = [
+        "Anxiety can make everything feel more intense and overwhelming. You're not alone in feeling this way. What's been the biggest source of worry for you lately?",
+        "I can sense you're dealing with a lot of stress right now. That must be exhausting. Would it help to talk through what's been on your mind?",
+        "Worry has a way of making our minds race. I'm here to listen and help you process these feelings. What's been keeping you up at night?"
+      ];
+      return responses[Math.floor(Math.random() * responses.length)];
     }
     
     if (lowerMessage.includes('lonely') || lowerMessage.includes('alone') || lowerMessage.includes('isolated')) {
-      return "Feeling lonely can be one of the hardest emotions to bear. I want you to know that you're not alone right now - I'm here with you. Can you share what's making you feel this way?";
+      const responses = [
+        "Loneliness can be one of the most painful emotions to experience. Right now, you're not alone - I'm here with you. When did you start feeling this way?",
+        "I hear how isolated you're feeling, and I want you to know that reaching out today shows incredible strength. What's making you feel most disconnected?",
+        "Being alone with difficult feelings is so hard. Thank you for sharing this with me. What would help you feel more connected right now?"
+      ];
+      return responses[Math.floor(Math.random() * responses.length)];
     }
     
     if (lowerMessage.includes('angry') || lowerMessage.includes('frustrated') || lowerMessage.includes('mad')) {
-      return "I can sense your frustration and anger. Those are valid feelings, and it's okay to experience them. What's been triggering these emotions for you?";
+      const responses = [
+        "Your anger is completely valid - emotions like frustration often signal that something important needs attention. What's been triggering these feelings for you?",
+        "I can sense your frustration, and it's okay to feel angry sometimes. These emotions are telling us something. What's been the hardest part to deal with?",
+        "Anger can be such a powerful emotion, and it sounds like you're really struggling with something. I'm here to listen. What's been building up for you?"
+      ];
+      return responses[Math.floor(Math.random() * responses.length)];
     }
     
-    if (lowerMessage.includes('thank') || lowerMessage.includes('grateful')) {
-      return "You're so welcome. It means a lot to me that you feel comfortable sharing here. How are you feeling right now?";
+    if (lowerMessage.includes('scared') || lowerMessage.includes('afraid') || lowerMessage.includes('fear')) {
+      const responses = [
+        "Fear can make us feel so vulnerable. It's brave of you to share this with me. What's been making you feel scared lately?",
+        "I can hear that you're dealing with some real fears right now. That must feel overwhelming. Would you like to talk about what's frightening you?",
+        "Being afraid is such a human experience, and you don't have to face it alone. I'm here to listen. What's been on your mind?"
+      ];
+      return responses[Math.floor(Math.random() * responses.length)];
     }
     
-    if (lowerMessage.includes('help') || lowerMessage.includes('support')) {
-      return "I'm here to provide emotional support and a listening ear. While I can't replace professional therapy, I can offer understanding and validation. What kind of support would feel most helpful right now?";
+    // Supportive acknowledgments
+    if (lowerMessage.includes('thank') || lowerMessage.includes('grateful') || lowerMessage.includes('appreciate')) {
+      const responses = [
+        "Your gratitude means so much to me. It shows your strength even in difficult times. How are you feeling right now?",
+        "You're so welcome. I'm honored that you feel comfortable sharing here. What's been on your heart lately?",
+        "Thank you for saying that. Your openness creates such a meaningful connection. What would be most helpful for you today?"
+      ];
+      return responses[Math.floor(Math.random() * responses.length)];
     }
     
-    if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey')) {
-      return "Hello there! I'm glad you reached out today. How are you feeling right now, and what brought you here?";
-    }
-    
-    // Default empathetic responses
-    const defaultResponses = [
-      "Thank you for sharing that with me. I can imagine that must be challenging to deal with. Can you tell me more about how this is affecting you?",
-      "I hear you, and I want you to know that your feelings are completely valid. What's been the hardest part about this situation?",
-      "It takes courage to open up about what you're going through. I'm here to listen without judgment. How long have you been feeling this way?",
-      "That sounds really difficult to navigate. You're not alone in feeling this way. What would feel most supportive for you right now?",
-      "I appreciate you trusting me with this. Your experiences matter, and so do your feelings. What's been on your mind the most lately?"
+    // General empathetic responses
+    const generalResponses = [
+      "I really appreciate you sharing that with me. It sounds like you're going through something significant. Can you tell me more about how this has been affecting you?",
+      "Thank you for trusting me with your thoughts. I can sense this is important to you. What's been the most challenging part of this experience?",
+      "I hear you, and I want you to know that your feelings and experiences are completely valid. What's been weighing on your mind the most?",
+      "It takes real courage to open up about what you're going through. I'm here to listen without any judgment. How long have you been dealing with this?",
+      "Your words matter, and so do your feelings. I can tell this is something you've been thinking about deeply. What would feel most supportive right now?",
+      "I'm glad you felt comfortable enough to share this with me. Sometimes just putting our thoughts into words can help. What's been your biggest concern lately?"
     ];
     
-    return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
+    return generalResponses[Math.floor(Math.random() * generalResponses.length)];
+  };
+
+  // Main response generation function
+  const generateBotResponse = async (userMessage: string): Promise<string> => {
+    try {
+      // Try Ollama first if selected
+      if (currentModel === 'ollama') {
+        const isOllamaAvailable = await checkOllamaStatus();
+        if (isOllamaAvailable) {
+          return await generateOllamaResponse(userMessage);
+        } else {
+          console.log('Ollama not available, falling back...');
+          setCurrentModel('huggingface');
+        }
+      }
+
+      // Try Hugging Face if selected or Ollama failed
+      if (currentModel === 'huggingface') {
+        return await generateHuggingFaceResponse(userMessage);
+      }
+
+      // Fallback to local responses
+      return generateEmpathethicFallback(userMessage);
+
+    } catch (error) {
+      console.error('AI model error, using local fallback:', error);
+      return generateEmpathethicFallback(userMessage);
+    }
   };
 
   const handleSendMessage = async () => {
@@ -93,21 +281,53 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    
+    // Update conversation history
+    setConversationHistory(prev => [
+      ...prev.slice(-10), // Keep last 10 exchanges
+      { role: 'user', content: inputValue }
+    ]);
+
+    const currentInput = inputValue;
     setInputValue("");
     setIsTyping(true);
 
-    // Simulate typing delay
-    setTimeout(() => {
-      const botResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        text: generateBotResponse(inputValue),
-        sender: 'bot',
-        timestamp: new Date()
-      };
+    try {
+      const botResponseText = await generateBotResponse(currentInput);
       
-      setMessages(prev => [...prev, botResponse]);
-      setIsTyping(false);
-    }, 1000 + Math.random() * 2000); // Random delay between 1-3 seconds
+      // Update conversation history with bot response
+      setConversationHistory(prev => [
+        ...prev,
+        { role: 'assistant', content: botResponseText }
+      ]);
+
+      // Simulate realistic typing delay
+      const delay = Math.max(1000, Math.min(botResponseText.length * 50, 3000));
+      setTimeout(() => {
+        const botResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: botResponseText,
+          sender: 'bot',
+          timestamp: new Date()
+        };
+        
+        setMessages(prev => [...prev, botResponse]);
+        setIsTyping(false);
+      }, delay);
+
+    } catch (error) {
+      console.error('Error generating response:', error);
+      setTimeout(() => {
+        const errorResponse: Message = {
+          id: (Date.now() + 1).toString(),
+          text: "I'm having some technical difficulties right now, but I'm still here to listen. Could you try sharing that again?",
+          sender: 'bot',
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorResponse]);
+        setIsTyping(false);
+      }, 1000);
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -119,6 +339,24 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const getModelDisplayName = () => {
+    switch (currentModel) {
+      case 'ollama': return 'Ollama (Local)';
+      case 'huggingface': return 'Hugging Face';
+      case 'local': return 'Local Responses';
+      default: return 'AI Assistant';
+    }
+  };
+
+  const getModelStatus = () => {
+    switch (currentModel) {
+      case 'ollama': return '🏠 Running locally with Ollama';
+      case 'huggingface': return '🤗 Using Hugging Face free inference';
+      case 'local': return '💭 Using empathetic local responses';
+      default: return '';
+    }
   };
 
   if (isMinimized) {
@@ -157,11 +395,21 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
               </div>
               <div>
                 <h1 className="text-xl font-semibold">Heard Support Chat</h1>
-                <p className="text-blue-100 text-sm">Your safe space to be heard</p>
+                <p className="text-blue-100 text-sm">{getModelDisplayName()}</p>
               </div>
             </div>
           </div>
           <div className="flex items-center space-x-2">
+            {/* Model Selector */}
+            <select
+              value={currentModel}
+              onChange={(e) => setCurrentModel(e.target.value as 'ollama' | 'huggingface' | 'local')}
+              className="bg-white/20 text-white rounded-lg px-3 py-1 text-sm border border-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
+            >
+              <option value="local" className="text-gray-800">Local Responses</option>
+              <option value="huggingface" className="text-gray-800">Hugging Face</option>
+              <option value="ollama" className="text-gray-800">Ollama</option>
+            </select>
             <Button
               variant="ghost"
               size="icon"
@@ -250,6 +498,13 @@ export function ChatbotPage({ onBack }: ChatbotPageProps) {
             >
               <Send className="w-5 h-5" />
             </Button>
+          </div>
+          
+          {/* Model Status */}
+          <div className="mt-2 text-center">
+            <p className="text-xs text-gray-600 bg-gray-50 rounded-full px-3 py-1 inline-block">
+              {getModelStatus()}
+            </p>
           </div>
           
           {/* Disclaimer */}
