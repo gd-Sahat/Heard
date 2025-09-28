@@ -4,7 +4,11 @@ import { Testimonials } from "../Testimonials";
 import { Shield, DollarSign, Users, Brain, ArrowRight, Clock } from "lucide-react";
 import { Button } from "../ui/button";
 
-export function HomePage() {
+interface HomePageProps {
+  onStartConversation?: () => void;
+}
+
+export function HomePage({ onStartConversation }: HomePageProps) {
   const keyFeatures = [
     {
       icon: DollarSign,
@@ -51,7 +55,7 @@ export function HomePage() {
 
   return (
     <div className="min-h-screen bg-white">
-      <Hero />
+      <Hero onStartConversation={onStartConversation} />
       
       {/* Key Features Section */}
       <section className="py-20 bg-white">
@@ -120,7 +124,11 @@ export function HomePage() {
           </div>
 
           <div className="text-center mt-12">
-            <Button size="lg" className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105">
+            <Button 
+              size="lg" 
+              onClick={onStartConversation}
+              className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+            >
               Get Started Now
             </Button>
           </div>
@@ -140,7 +148,11 @@ export function HomePage() {
             Join thousands of people who have found their voice and support through Heard. Your journey to better emotional wellbeing starts here.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" className="bg-white text-blue-600 hover:bg-blue-50 px-8 py-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105">
+            <Button 
+              size="lg" 
+              onClick={onStartConversation}
+              className="bg-white text-blue-600 hover:bg-blue-50 px-8 py-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+            >
               <Clock className="w-5 h-5 mr-2" />
               Start a Conversation
             </Button>

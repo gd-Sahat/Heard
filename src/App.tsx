@@ -11,6 +11,7 @@ import { BecomeListenerPage } from "./components/pages/BecomeListenerPage";
 import { ResourcesPage } from "./components/pages/ResourcesPage";
 import { PrivacyPage } from "./components/pages/PrivacyPage";
 import { ContactPage } from "./components/pages/ContactPage";
+import { ChatbotPage } from "./components/pages/ChatbotPage";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState("home");
@@ -24,7 +25,7 @@ export default function App() {
   const renderPage = () => {
     switch (currentPage) {
       case "home":
-        return <HomePage />;
+        return <HomePage onStartConversation={() => handleNavigation("start-conversation")} />;
       case "about":
         return <AboutPage />;
       case "how-it-works":
@@ -39,13 +40,14 @@ export default function App() {
         return <PrivacyPage />;
       case "contact":
         return <ContactPage />;
+      case "chatbot":
+        return <ChatbotPage onBack={() => handleNavigation("home")} />;
       case "corporate":
         return <CorporatePage />;
       case "technology":
         return <TechnologyPage />;
       case "start-conversation":
-        // This would typically redirect to the app or show a signup modal
-        return <StartConversationPage />;
+        return <ChatbotPage onBack={() => handleNavigation("home")} />;
       default:
         return <HomePage />;
     }

@@ -1,7 +1,11 @@
 import { Button } from "./ui/button";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 
-export function Hero() {
+interface HeroProps {
+  onStartConversation?: () => void;
+}
+
+export function Hero({ onStartConversation }: HeroProps) {
   return (
     <section className="relative min-h-[80vh] bg-gradient-to-br from-blue-50 via-white to-blue-50 flex items-center">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -21,7 +25,11 @@ export function Hero() {
             </div>
             
             <div className="flex flex-col sm:flex-row gap-4">
-              <Button size="lg" className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105">
+              <Button 
+                size="lg" 
+                onClick={onStartConversation}
+                className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-8 py-4 rounded-full shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
+              >
                 Start a Conversation
               </Button>
               <Button variant="outline" size="lg" className="border-blue-200 text-blue-600 hover:bg-blue-50 px-8 py-4 rounded-full transition-all duration-200">
