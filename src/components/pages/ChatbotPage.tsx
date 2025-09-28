@@ -13,10 +13,9 @@ interface Message {
 
 interface ChatbotPageProps {
   onBack?: () => void;
-  hfToken?: string;
 }
 
-export function ChatbotPage({ onBack, hfToken }: ChatbotPageProps) {
+export function ChatbotPage({ onBack }: ChatbotPageProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -29,24 +28,15 @@ export function ChatbotPage({ onBack, hfToken }: ChatbotPageProps) {
   const [isTyping, setIsTyping] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [conversationHistory, setConversationHistory] = useState<Array<{role: string, content: string}>>([]);
-  const [currentModel, setCurrentModel] = useState<'hf-router' | 'ollama' | 'local'>('hf-router');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Configuration
-  const HF_TOKEN = hfToken || process.env.REACT_APP_HF_TOKEN || "";
-  const OLLAMA_URL = "http://localhost:11434";
-  const OLLAMA_MODEL = "llama3.2:3b";
-
-  // Available Hugging Face models through router
-  const HF_MODELS = [
-    "openai/gpt-oss-120b:nebius",     // GPT-OSS 120B - Very capable
-    "meta-llama/llama-3.1-8b-instruct", // Llama 3.1 8B - Good balance
-    "microsoft/phi-3.5-mini-instruct",   // Phi 3.5 Mini - Fast
-    "mistralai/mistral-7b-instruct",     // Mistral 7B - Reliable
-  ];
+  // ⚠️ IMPORTANT: Replace with your actual OpenAI API key
+  // For production, use environment variables or backend API
+  const OPENAI_API_KEY = "YOUR_OPENAI_API_KEY_HERE";
   
-  const [selectedHFModel, setSelectedHFModel] = useState(HF_MODELS[0]);
+  // Set to false to disable AI and use only local responses
+  const USE_AI = false; // Change to true when you add your API key
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -56,13 +46,13 @@ export function ChatbotPage({ onBack, hfToken }: ChatbotPageProps) {
     scrollToBottom();
   }, [messages]);
 
-  // Hugging Face Router API call (OpenAI-compatible)
-  const generateHFRouterResponse = async (userMessage: string): Promise<string> => {
+  // AI-powered response generation
+  const generateAIResponse = async (userMessage: string): Promise<string> => {
     try {
       const systemPrompt = `You are a compassionate AI mental health support companion called "Heard". Your role is to:
 
 1. Listen actively and empathetically to users' concerns
-2. Provide emotional validation and support  
+2. Provide emotional validation and support
 3. Ask thoughtful follow-up questions to help users process their feelings
 4. Offer gentle coping strategies when appropriate
 5. Maintain appropriate boundaries - you're not a replacement for professional therapy
@@ -84,162 +74,92 @@ Remember: You're creating a safe space for people to be heard and validated.`;
         { role: 'user', content: userMessage }
       ];
 
-      const response = await fetch('https://router.huggingface.co/v1/chat/completions', {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${HF_TOKEN}`,
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: selectedHFModel,
+          model: 'gpt-3.5-turbo',
           messages: messages,
           max_tokens: 200,
           temperature: 0.7,
-          stream: false,
         }),
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        throw new Error(`HF Router API Error: ${response.status} - ${errorData}`);
+        throw new Error(`OpenAI API Error: ${response.status}`);
       }
 
       const data = await response.json();
       return data.choices[0]?.message?.content || "I'm here to listen. Can you tell me more?";
 
     } catch (error) {
-      console.error('HF Router Error:', error);
+      console.error('AI API Error:', error);
       throw error;
     }
   };
 
-  // Ollama API call (fallback)
-  const generateOllamaResponse = async (userMessage: string): Promise<string> => {
-    try {
-      const systemPrompt = `You are a compassionate AI mental health support companion. Your role is to provide empathetic, supportive responses to help users feel heard and validated. 
-
-Guidelines:
-- Listen actively and empathetically
-- Provide emotional validation
-- Ask thoughtful follow-up questions
-- Keep responses concise (2-4 sentences)
-- Use warm, non-judgmental language
-- Focus on emotional support, not medical advice
-- If someone mentions crisis/self-harm, suggest professional help
-
-Remember: Create a safe space for people to be heard.`;
-
-      const prompt = `${systemPrompt}\n\nHuman: ${userMessage}\n\nAssistant:`;
-
-      const response = await fetch(`${OLLAMA_URL}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          prompt: prompt,
-          stream: false,
-          options: {
-            temperature: 0.7,
-            top_p: 0.9,
-            max_tokens: 200,
-          }
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Ollama API Error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.response || "I'm here to listen. Can you tell me more?";
-
-    } catch (error) {
-      console.error('Ollama Error:', error);
-      throw error;
-    }
-  };
-
-  // Enhanced local empathetic responses
+  // Fallback local response system (your original logic)
   const generateLocalResponse = (userMessage: string): string => {
     const lowerMessage = userMessage.toLowerCase();
     
-    // Emotion-specific responses
+    // Empathetic responses based on keywords
     if (lowerMessage.includes('sad') || lowerMessage.includes('depressed') || lowerMessage.includes('down')) {
-      const responses = [
-        "I can hear the sadness in your words, and I want you to know that what you're feeling matters. Sometimes just acknowledging these heavy emotions can be the first step. What's been weighing on you most?",
-        "It takes courage to share when you're feeling down. I'm here to listen without judgment. Would you like to tell me more about what's contributing to these feelings?",
-        "Sadness can feel overwhelming, but you don't have to carry it alone. I'm here with you right now. What would feel most supportive in this moment?"
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
+      return "I hear that you're feeling sad right now. That must be really difficult. Would you like to tell me more about what's been weighing on your heart?";
     }
     
     if (lowerMessage.includes('anxious') || lowerMessage.includes('worried') || lowerMessage.includes('stress')) {
-      const responses = [
-        "Anxiety can make everything feel more intense and overwhelming. You're not alone in feeling this way. What's been the biggest source of worry for you lately?",
-        "I can sense you're dealing with a lot of stress right now. That must be exhausting. Would it help to talk through what's been on your mind?",
-        "Worry has a way of making our minds race. I'm here to listen and help you process these feelings. What's been keeping you up at night?"
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
+      return "It sounds like you're experiencing some anxiety or stress. Those feelings can be overwhelming. What's been causing you the most worry lately?";
     }
     
     if (lowerMessage.includes('lonely') || lowerMessage.includes('alone') || lowerMessage.includes('isolated')) {
-      const responses = [
-        "Loneliness can be one of the most painful emotions to experience. Right now, you're not alone - I'm here with you. When did you start feeling this way?",
-        "I hear how isolated you're feeling, and I want you to know that reaching out today shows incredible strength. What's making you feel most disconnected?",
-        "Being alone with difficult feelings is so hard. Thank you for sharing this with me. What would help you feel more connected right now?"
-      ];
-      return responses[Math.floor(Math.random() * responses.length)];
+      return "Feeling lonely can be one of the hardest emotions to bear. I want you to know that you're not alone right now - I'm here with you. Can you share what's making you feel this way?";
     }
     
-    // General empathetic responses
-    const generalResponses = [
-      "I really appreciate you sharing that with me. It sounds like you're going through something significant. Can you tell me more about how this has been affecting you?",
-      "Thank you for trusting me with your thoughts. I can sense this is important to you. What's been the most challenging part of this experience?",
-      "I hear you, and I want you to know that your feelings and experiences are completely valid. What's been weighing on your mind the most?",
-      "It takes real courage to open up about what you're going through. I'm here to listen without any judgment. How long have you been dealing with this?",
-      "Your words matter, and so do your feelings. I can tell this is something you've been thinking about deeply. What would feel most supportive right now?"
+    if (lowerMessage.includes('angry') || lowerMessage.includes('frustrated') || lowerMessage.includes('mad')) {
+      return "I can sense your frustration and anger. Those are valid feelings, and it's okay to experience them. What's been triggering these emotions for you?";
+    }
+    
+    if (lowerMessage.includes('thank') || lowerMessage.includes('grateful')) {
+      return "You're so welcome. It means a lot to me that you feel comfortable sharing here. How are you feeling right now?";
+    }
+    
+    if (lowerMessage.includes('help') || lowerMessage.includes('support')) {
+      return "I'm here to provide emotional support and a listening ear. While I can't replace professional therapy, I can offer understanding and validation. What kind of support would feel most helpful right now?";
+    }
+    
+    if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('hey')) {
+      return "Hello there! I'm glad you reached out today. How are you feeling right now, and what brought you here?";
+    }
+    
+    // Default empathetic responses
+    const defaultResponses = [
+      "Thank you for sharing that with me. I can imagine that must be challenging to deal with. Can you tell me more about how this is affecting you?",
+      "I hear you, and I want you to know that your feelings are completely valid. What's been the hardest part about this situation?",
+      "It takes courage to open up about what you're going through. I'm here to listen without judgment. How long have you been feeling this way?",
+      "That sounds really difficult to navigate. You're not alone in feeling this way. What would feel most supportive for you right now?",
+      "I appreciate you trusting me with this. Your experiences matter, and so do your feelings. What's been on your mind the most lately?"
     ];
     
-    return generalResponses[Math.floor(Math.random() * generalResponses.length)];
-  };
-
-  // Check if Ollama is available
-  const checkOllamaStatus = async (): Promise<boolean> => {
-    try {
-      const response = await fetch(`${OLLAMA_URL}/api/tags`);
-      return response.ok;
-    } catch (error) {
-      return false;
-    }
+    return defaultResponses[Math.floor(Math.random() * defaultResponses.length)];
   };
 
   // Main response generation function
   const generateBotResponse = async (userMessage: string): Promise<string> => {
-    try {
-      // Try HF Router first if token is available
-      if (currentModel === 'hf-router' && HF_TOKEN) {
-        return await generateHFRouterResponse(userMessage);
+    // Try AI first if enabled and API key is provided
+    if (USE_AI && OPENAI_API_KEY && OPENAI_API_KEY !== "YOUR_OPENAI_API_KEY_HERE") {
+      try {
+        return await generateAIResponse(userMessage);
+      } catch (error) {
+        console.error('AI failed, falling back to local responses:', error);
+        return generateLocalResponse(userMessage);
       }
-
-      // Try Ollama if selected
-      if (currentModel === 'ollama') {
-        const isOllamaAvailable = await checkOllamaStatus();
-        if (isOllamaAvailable) {
-          return await generateOllamaResponse(userMessage);
-        } else {
-          console.log('Ollama not available, falling back...');
-        }
-      }
-
-      // Fallback to local responses
-      return generateLocalResponse(userMessage);
-
-    } catch (error) {
-      console.error('AI model error, using local fallback:', error);
-      return generateLocalResponse(userMessage);
     }
+
+    // Use local responses as default/fallback
+    return generateLocalResponse(userMessage);
   };
 
   const handleSendMessage = async () => {
@@ -254,9 +174,9 @@ Remember: Create a safe space for people to be heard.`;
 
     setMessages(prev => [...prev, userMessage]);
     
-    // Update conversation history
+    // Update conversation history for AI context
     setConversationHistory(prev => [
-      ...prev.slice(-10), // Keep last 10 exchanges
+      ...prev.slice(-10), // Keep last 10 exchanges for context
       { role: 'user', content: inputValue }
     ]);
 
@@ -274,7 +194,7 @@ Remember: Create a safe space for people to be heard.`;
       ]);
 
       // Simulate realistic typing delay
-      const delay = Math.max(1000, Math.min(botResponseText.length * 50, 3000));
+      const delay = 1000 + Math.random() * 2000;
       setTimeout(() => {
         const botResponse: Message = {
           id: (Date.now() + 1).toString(),
@@ -292,7 +212,7 @@ Remember: Create a safe space for people to be heard.`;
       setTimeout(() => {
         const errorResponse: Message = {
           id: (Date.now() + 1).toString(),
-          text: "I'm having some technical difficulties right now, but I'm still here to listen. Could you try sharing that again?",
+          text: "I'm having some technical difficulties right now. I'm still here to listen though. Could you try sharing that again?",
           sender: 'bot',
           timestamp: new Date()
         };
@@ -311,24 +231,6 @@ Remember: Create a safe space for people to be heard.`;
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-
-  const getModelDisplayName = () => {
-    switch (currentModel) {
-      case 'hf-router': return `HF: ${selectedHFModel.split('/')[1] || selectedHFModel}`;
-      case 'ollama': return 'Ollama (Local)';
-      case 'local': return 'Local Responses';
-      default: return 'AI Assistant';
-    }
-  };
-
-  const getModelStatus = () => {
-    switch (currentModel) {
-      case 'hf-router': return HF_TOKEN ? '🤗 Using Hugging Face Router API' : '❌ HF Token required';
-      case 'ollama': return '🏠 Running locally with Ollama';
-      case 'local': return '💭 Using empathetic local responses';
-      default: return '';
-    }
   };
 
   if (isMinimized) {
@@ -367,38 +269,15 @@ Remember: Create a safe space for people to be heard.`;
               </div>
               <div>
                 <h1 className="text-xl font-semibold">Heard Support Chat</h1>
-                <p className="text-blue-100 text-sm">{getModelDisplayName()}</p>
+                <p className="text-blue-100 text-sm">
+                  {USE_AI && OPENAI_API_KEY !== "YOUR_OPENAI_API_KEY_HERE" 
+                    ? 'AI-powered support' 
+                    : 'Your safe space to be heard'}
+                </p>
               </div>
             </div>
           </div>
-          
           <div className="flex items-center space-x-2">
-            {/* Model Selector */}
-            <select
-              value={currentModel}
-              onChange={(e) => setCurrentModel(e.target.value as 'hf-router' | 'ollama' | 'local')}
-              className="bg-white/20 text-white rounded-lg px-3 py-1 text-sm border border-white/30 focus:outline-none focus:ring-2 focus:ring-white/50"
-            >
-              <option value="hf-router" className="text-gray-800">HF Router</option>
-              <option value="ollama" className="text-gray-800">Ollama</option>
-              <option value="local" className="text-gray-800">Local</option>
-            </select>
-            
-            {/* HF Model Selector */}
-            {currentModel === 'hf-router' && (
-              <select
-                value={selectedHFModel}
-                onChange={(e) => setSelectedHFModel(e.target.value)}
-                className="bg-white/20 text-white rounded-lg px-3 py-1 text-sm border border-white/30 focus:outline-none focus:ring-2 focus:ring-white/50 max-w-[120px]"
-              >
-                {HF_MODELS.map((model) => (
-                  <option key={model} value={model} className="text-gray-800">
-                    {model.split('/')[1]?.split('-')[0] || model}
-                  </option>
-                ))}
-              </select>
-            )}
-            
             <Button
               variant="ghost"
               size="icon"
@@ -489,12 +368,14 @@ Remember: Create a safe space for people to be heard.`;
             </Button>
           </div>
           
-          {/* Model Status */}
-          <div className="mt-2 text-center">
-            <p className="text-xs text-gray-600 bg-gray-50 rounded-full px-3 py-1 inline-block">
-              {getModelStatus()}
-            </p>
-          </div>
+          {/* Status indicator */}
+          {!USE_AI && (
+            <div className="mt-2 text-center">
+              <p className="text-xs text-orange-600 bg-orange-50 rounded-full px-3 py-1 inline-block">
+                💡 Using local responses - Add API key to enable AI
+              </p>
+            </div>
+          )}
           
           {/* Disclaimer */}
           <div className="mt-4 text-center">
